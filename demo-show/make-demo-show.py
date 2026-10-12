@@ -5,14 +5,18 @@ Every file this writes is synthesised here — there is no sampled footage, no
 stock photography and no third-party audio anywhere in this repository, so the
 whole show can be published, forked and rebuilt without asking anyone.
 
-    python3 make-demo-show.py [outdir]        default: ./show
+    python3 make-demo-show.py [outdir]        default: demo-show/show
 
 Needs ffmpeg on PATH for the moving pictures, and Blender for the AR set (see
 ../ar-set). Everything else is plain Python.
 """
 import json, math, os, struct, subprocess, sys, wave, zlib
 
-OUT = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else "show")
+HERE = os.path.dirname(os.path.abspath(__file__))
+# Beside the script, not beside the shell, so the command in the README
+# writes where the README says it does.
+OUT = os.path.abspath(sys.argv[1] if len(sys.argv) > 1
+                      else os.path.join(HERE, "show"))
 os.makedirs(OUT, exist_ok=True)
 def p(*a): return os.path.join(OUT, *a)
 def say(m): print(f"  {m}", flush=True)

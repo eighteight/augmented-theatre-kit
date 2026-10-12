@@ -7,9 +7,15 @@ order and prints what the room is doing. Nothing here is a mock. It speaks the
 same OSC and the same HTTP the Dashboard speaks, so the audience app cannot
 tell the difference.
 
-    python3 atc-drive.py ../demo-show/show            deliver, then run the show
-    python3 atc-drive.py ../demo-show/show --deliver  deliver and wait, no cues
-    python3 atc-drive.py ../demo-show/show --listen   just watch the telemetry
+    python3 atc-drive.py ../demo-show/show                deliver, then run it
+    python3 atc-drive.py ../demo-show/show ../ar-set/demo-triadic-ballet
+    python3 atc-drive.py ../demo-show/show --deliver     deliver and wait, no cues
+    python3 atc-drive.py ../demo-show/show --listen      just watch the telemetry
+
+Give it any number of folders. A folder holding an ar-set.json is an AR set:
+its pieces are delivered and the little .atcset document that ties them
+together is written here, exactly as the Dashboard writes it, so /atc/raise
+has something to raise. Anything else is a folder of media.
 
 It needs no libraries: OSC is a simple enough format to write by hand, and the
 standard library has an HTTP server.
@@ -111,31 +117,182 @@ class Sender:
             except OSError as e: print(f"    (send to {host} failed: {e})")
 
 # ------------------------------------------------------------------- the show
+# The app only presents what it has a type for, so the extension decides the
+# MIME exactly as the Dashboard's own map does — Python's mimetypes has never
+# heard of .glb or .atcset.
+MIME = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+        "gif": "image/gif", "webp": "image/webp", "heic": "image/heic",
+        "mp4": "video/mp4", "mov": "video/quicktime", "m4v": "video/x-m4v",
+        "mp3": "audio/mpeg", "m4a": "audio/mp4", "wav": "audio/wav",
+        "aac": "audio/aac", "caf": "audio/x-caf", "ogg": "audio/ogg",
+        "txt": "text/plain", "json": "application/json", "pdf": "application/pdf",
+        "zip": "application/zip", "usdz": "model/vnd.usdz+zip",
+        "glb": "model/gltf-binary", "gltf": "model/gltf+json",
+        "atcset": "application/vnd.atc.arset+json",
+        "frag": "x-shader/x-fragment"}
+SET_MIME = MIME["atcset"]
+
+def ext_of(name):  return name.rsplit(".", 1)[-1].lower() if "." in name else ""
+def mime_of(name):
+    return MIME.get(ext_of(name)) or mimetypes.guess_type(name)[0] or "application/octet-stream"
+
+def glb_bindings(path):
+    """{node name: video file} as the model itself declares it.
+
+    A .glb is a 12-byte header then chunks; the first is the glTF JSON. A
+    surface says which film belongs on it in its node `extras`, which is a
+    Blender custom property — so the binding travels inside the model and
+    nobody has to remember it.
+    """
+    try:
+        with open(path, "rb") as f:
+            head = f.read(20)
+            if head[:4] != b"glTF": return {}
+            length, kind = struct.unpack("<II", head[12:20])
+            if kind != 0x4E4F534A: return {}          # 'JSON'
+            gltf = json.loads(f.read(length))
+    except Exception:
+        return {}
+    bound = {}
+    for node in gltf.get("nodes", []):
+        name, extras = node.get("name"), node.get("extras")
+        if not name or not isinstance(extras, dict): continue
+        for key in ("video", "projection", "atc:video"):
+            if isinstance(extras.get(key), str) and extras[key]:
+                bound[name] = extras[key]; break
+    return bound
+
+def is_ar_set(folder):
+    return any(os.path.isfile(os.path.join(folder, n))
+               for n in ("ar-set.json", "set.json"))
+
+class ArSet:
+    """A folder the phone can stand up on a printed picture.
+
+    The folder is read the way the Dashboard's importer reads it: ar-set.json
+    names the pieces, and whatever it does not name is taken by extension.
+    """
+    IMAGES = ("jpg", "jpeg", "png")
+    MODELS = ("glb", "gltf")
+    SOUNDS = ("m4a", "mp3", "wav", "aac", "ogg", "caf")
+    FILMS  = ("mp4", "mov", "m4v")
+
+    def __init__(self, folder):
+        self.folder = os.path.abspath(folder)
+        self.title  = os.path.basename(self.folder)
+        self.id     = self.title.lower()
+        side = {}
+        for name in ("ar-set.json", "set.json"):
+            path = os.path.join(self.folder, name)
+            if os.path.isfile(path):
+                try: side = json.load(open(path))
+                except ValueError as e: print(f"  ! {name} is not valid JSON ({e})")
+                break
+        files = [n for n in sorted(os.listdir(self.folder))
+                 if os.path.isfile(os.path.join(self.folder, n)) and not n.startswith(".")]
+
+        def pick(named, exts):
+            same = [n for n in files if ext_of(n) in exts]
+            for n in same:
+                if named and n.lower() == str(named).lower(): return n
+            return same[0] if same else None
+
+        self.marker = pick(side.get("marker"), self.IMAGES)
+        self.model  = pick(side.get("model"),  self.MODELS)
+        self.audio  = pick(side.get("audio"),  self.SOUNDS)
+        self.films  = [n for n in files if ext_of(n) in self.FILMS]
+        self.width  = float(side.get("widthMeters") or 0.21)
+        self.scale  = float(side.get("scale") or 1.0)
+
+        # Which film goes on which surface: the model's own word first, then
+        # ar-set.json, then a film named after the surface.
+        authored = glb_bindings(os.path.join(self.folder, self.model)) if self.model else {}
+        named = side.get("projections") if isinstance(side.get("projections"), dict) else {}
+        self.node_of = {}
+        for film in self.films:
+            node = next((n for n, f in authored.items() if str(f).lower() == film.lower()), None)
+            node = node or next((n for n, f in named.items() if str(f).lower() == film.lower()), None)
+            self.node_of[film] = node or film.rsplit(".", 1)[0]
+        self.authored = bool(authored)
+
+    def pieces(self):
+        return [n for n in [self.marker, self.model, self.audio] + self.films if n]
+
+    def problems(self):
+        out = []
+        if not self.marker: out.append("no drawing (.jpg/.png) — the phone would have nothing to recognise")
+        if not self.model:  out.append("no model (.glb)")
+        if not 0.01 <= self.width <= 3.0:
+            out.append(f"widthMeters is {self.width} — measure the paper being handed out")
+        if self.scale <= 0: out.append("scale must be a positive number")
+        return out
+
+    def document(self, sha_of):
+        """The .atcset the Dashboard would stage — what the phone actually reads."""
+        one = {"id": self.id, "title": self.title,
+               "marker": {"sha256": sha_of(self.marker), "widthMeters": self.width},
+               "model":  {"sha256": sha_of(self.model),  "scale": self.scale},
+               "projections": [{"node": self.node_of[f], "sha256": sha_of(f)}
+                               for f in self.films]}
+        if self.audio: one["audio"] = {"sha256": sha_of(self.audio)}
+        return json.dumps({"version": 1, "sets": [one]}).encode()
+
 class Show:
     """The media on disk, hashed the way the handsets identify it."""
-    def __init__(self, folder):
-        self.folder, self.assets = os.path.abspath(folder), []
-        for name in sorted(os.listdir(folder)):
-            path = os.path.join(folder, name)
-            if not os.path.isfile(path) or name.startswith("."): continue
-            data = open(path, "rb").read()
-            mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
-            if name.endswith(".m4a"): mime = "audio/mp4"
-            if name.endswith(".ogg"): mime = "audio/ogg"
-            self.assets.append({"sha256": hashlib.sha256(data).hexdigest(),
-                                "name": name, "size": len(data), "mime": mime,
-                                "path": path,
-                                # an equirectangular clip is flagged, or the
-                                # phone would show it flat
-                                "layout": "360" if "360" in name else ""})
+    def __init__(self, paths):
+        self.assets, self.sets = [], []
+        for path in paths:
+            path = os.path.abspath(path)
+            if not os.path.isdir(path):
+                print(f"  ! {path} is not a folder — skipped"); continue
+            if is_ar_set(path):
+                self.add_set(path); continue
+            for name in sorted(os.listdir(path)):
+                full = os.path.join(path, name)
+                if name.startswith("."): continue
+                # a set may simply live inside the show folder
+                if os.path.isdir(full):
+                    if is_ar_set(full): self.add_set(full)
+                    continue
+                self.add_file(full)
+
+    def add(self, name, data, path=None, set_id=None):
+        sha = hashlib.sha256(data).hexdigest()
+        known = next((a for a in self.assets if a["sha256"] == sha), None)
+        if known: return known                 # the same bytes are one asset
+        asset = {"sha256": sha, "name": name, "size": len(data), "mime": mime_of(name),
+                 "path": path, "data": None if path else data, "set": set_id,
+                 # an equirectangular clip is flagged, or the phone shows it flat
+                 "layout": "360" if "360" in name and not set_id else ""}
+        self.assets.append(asset)
+        return asset
+
+    def add_file(self, path, set_id=None):
+        return self.add(os.path.basename(path), open(path, "rb").read(), path, set_id)
+
+    def add_set(self, folder):
+        s = ArSet(folder)
+        trouble = s.problems()
+        if trouble:
+            for t in trouble: print(f"  ! {s.id}: {t}")
+            print(f"  ! {s.id} will not be delivered")
+            return
+        sha = {}
+        for name in s.pieces():
+            sha[name] = self.add_file(os.path.join(folder, name), set_id=s.id)["sha256"]
+        doc = s.document(lambda n: sha.get(n, ""))
+        self.add(s.id + ".atcset", doc, None, s.id)
+        self.sets.append(s)
+
     def by_mime(self, prefix):
         return [a for a in self.assets if a["mime"].startswith(prefix)]
     def find(self, fragment):
-        return next((a for a in self.assets if fragment in a["name"]), None)
+        return next((a for a in self.assets
+                     if fragment in a["name"] and not a["set"]), None)
     def manifest(self):
-        return {"version": 1, "assets": [{k: a[k] for k in
-                ("sha256", "name", "size", "mime") if True} | 
-                ({"layout": a["layout"]} if a["layout"] else {}) for a in self.assets]}
+        return {"version": 1, "assets": [
+            {k: a[k] for k in ("sha256", "name", "size", "mime")} |
+            ({"layout": a["layout"]} if a["layout"] else {}) for a in self.assets]}
 
 # --------------------------------------------------------------- serving them
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -154,7 +311,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             sha = self.path.split("/asset/", 1)[1]
             a = next((x for x in Handler.show.assets if x["sha256"] == sha), None)
             if not a: self.send_error(404); return
-            data = open(a["path"], "rb").read()
+            data = a["data"] if a["path"] is None else open(a["path"], "rb").read()
             start, end = 0, len(data) - 1
             rng = self.headers.get("Range", "")
             partial = rng.startswith("bytes=")
@@ -252,7 +409,17 @@ def deliver(send, show, house, seconds=25):
     print(f"\n[deliver] serving {len(show.assets)} asset(s) on "
           f"http://{my_ip()}:{HTTP_PORT}")
     for a in show.assets:
-        print(f"    {a['name']:<18} {a['size']:>9,} b  {a['mime']:<16} {a['sha256'][:12]}…")
+        owner = f"  [{a['set']}]" if a["set"] else ""
+        print(f"    {a['name']:<20} {a['size']:>9,} b  {a['mime']:<28} "
+              f"{a['sha256'][:12]}…{owner}")
+    for s in show.sets:
+        print(f"\n[set] {s.id} — anchor {s.marker} printed {s.width * 100:.0f} cm wide, "
+              f"model {s.model} at scale {s.scale:g}")
+        for film in s.films:
+            how = "from the model" if s.authored else "from ar-set.json"
+            print(f"      {film} plays on the surface named {s.node_of[film]!r} ({how})")
+        if s.audio: print(f"      score: {s.audio}")
+        print(f"      raise it with:  /atc/raise {s.id}")
 
     # "the manifest changed — sync when convenient"; this is the pre-staging path
     send.send("/atc/manifest", HTTP_PORT, "demo", TELEMETRY_PORT)
@@ -301,9 +468,14 @@ def run_show(send, show, house):
         cue(send, f"a look over the device's own camera — {look}",
             "/atc/effect", look, 1, 1.0, hold=5)
         cue(send, f"{look} off", "/atc/effect", look, 0, 1.0, hold=1)
-    cue(send, "an AR set stands up on its anchor — demo-triadic-ballet",
-        "/atc/raise", "demo-triadic-ballet", 1.0, hold=12)
-    cue(send, "and is struck", "/atc/strike", hold=2)
+    for s in show.sets:
+        cue(send, f"an AR set stands up on its anchor — {s.id} "
+                  f"(hold the printed {s.marker} in front of the phone)",
+            "/atc/raise", s.id, 1.0, hold=12)
+        cue(send, "and is struck", "/atc/strike", hold=2)
+    if not show.sets:
+        print("\n[cue] no AR set was delivered, so nothing is raised — pass a "
+              "folder\n      holding an ar-set.json to deliver one.")
     cue(send, "back to the foyer", "/atc/stop", "", hold=1)
     print("\n[done] the show has run")
 
@@ -312,14 +484,23 @@ def main():
     flags = {a for a in sys.argv[1:] if a.startswith("--")}
     if not args:
         print(__doc__); return 2
-    show = Show(args[0])
+    show = Show(args)
     if not show.assets:
-        print(f"no media in {args[0]} — run ../demo-show/make-demo-show.py first")
+        print(f"nothing to deliver in {', '.join(args)} — "
+              f"run ../demo-show/make-demo-show.py first")
         return 1
 
     house = House()
     Handler.show = show
-    server = Server(("", HTTP_PORT), Handler)
+    try:
+        server = Server(("", HTTP_PORT), Handler)
+    except OSError as e:
+        # The Dashboard serves its own assets on this port, so the commonest
+        # reason for this is that it is open on the same machine.
+        print(f"  ! port {HTTP_PORT} is taken ({e.strerror}) — quit the Dashboard, "
+              f"or run this\n    on another machine. Nothing can be delivered until "
+              f"the port is free.")
+        return 1
     threading.Thread(target=server.serve_forever, daemon=True).start()
     send = Sender()
 
@@ -327,6 +508,9 @@ def main():
     print(f"  this machine : {my_ip()}")
     print(f"  cues     -> {', '.join(send.targets)}:{CUE_PORT}")
     print(f"  media    -> http://{my_ip()}:{HTTP_PORT}")
+    print(f"  show     : {len(show.assets)} asset(s)" +
+          (f", {len(show.sets)} AR set(s): " + ", ".join(s.id for s in show.sets)
+           if show.sets else ", no AR set"))
     print(f"  replies  <- {TELEMETRY_PORT}" + ("" if house.bound else "  (unavailable)"))
 
     try:

@@ -8,8 +8,11 @@ the set can be published and rebuilt by anyone.
 """
 import json, math, os, shutil, struct, subprocess, sys, zlib
 
-OUT = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else "demo-triadic-ballet")
 HERE = os.path.dirname(os.path.abspath(__file__))
+# Beside the script, not beside the shell: the set belongs with the
+# scripts that made it however it was invoked.
+OUT = os.path.abspath(sys.argv[1] if len(sys.argv) > 1
+                      else os.path.join(HERE, "demo-triadic-ballet"))
 os.makedirs(OUT, exist_ok=True)
 def p(*a): return os.path.join(OUT, *a)
 def say(m): print(f"  {m}", flush=True)

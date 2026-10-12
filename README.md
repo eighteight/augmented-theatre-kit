@@ -22,34 +22,52 @@ asking anyone.
 ## Try it in five minutes
 
 You need [the audience app](https://augmented-theatre.web.app) on a phone, the
-phone and your computer on the **same Wi-Fi**, and Python 3. For the AR set you
-also need [Blender](https://www.blender.org/download/) (free); for the media,
-`ffmpeg`.
+phone and your computer on the **same Wi-Fi**, and Python 3. Nothing else: the
+AR set is committed, built.
 
 ```sh
-python3 demo-show/make-demo-show.py            # writes demo-show/show/
-python3 drive/atc-drive.py demo-show/show      # delivers it, then runs the show
+python3 demo-show/make-demo-show.py                                  # the media
+python3 drive/atc-drive.py demo-show/show ar-set/demo-triadic-ballet # deliver, then run
 ```
 
-The second command prints what it is doing and what the room is doing:
+The first command needs `ffmpeg`; it writes `demo-show/show/`. The second takes
+any number of folders — a folder holding an `ar-set.json` is an AR set, and
+anything else is a folder of media. Print `ar-set/demo-triadic-ballet/marker.jpg`
+at 21 cm square and hold it in front of the phone when the set is raised.
+
+To rebuild the AR set yourself you also need [Blender](https://www.blender.org/download/)
+(free):
+
+```sh
+python3 ar-set/make-ar-set.py                  # rewrites ar-set/demo-triadic-ballet/
+```
+
+`atc-drive.py` prints what it is doing and what the room is doing:
 
 ```
 Augmented Theatre, driven from Python
   this machine : 192.168.1.42
   cues     -> 192.168.1.255, 255.255.255.255:3000
   media    -> http://192.168.1.42:8090
+  show     : 12 asset(s), 1 AR set(s): demo-triadic-ballet
   replies  <- 3001
 
-[deliver] serving 6 asset(s) on http://192.168.1.42:8090
-    clip.mp4             456,866 b  video/mp4        0ffe57b7f187…
+[deliver] serving 12 asset(s) on http://192.168.1.42:8090
+    clip.mp4               456,866 b  video/mp4      0ffe57b7f187…
+    stage.glb              188,932 b  model/gltf-binary  a3e053023317…  [demo-triadic-ballet]
     ...
+[set] demo-triadic-ballet — anchor marker.jpg printed 21 cm wide, model stage.glb at scale 1
+      screen-left.mp4 plays on the surface named 'screen-left' (from the model)
+      score: music.m4a
+      raise it with:  /atc/raise demo-triadic-ballet
+
 [deliver] /atc/manifest -> 192.168.1.255, 255.255.255.255:3000
     -> 192.168.1.57 fetched the manifest
     -> 192.168.1.57 took clip.mp4 (456,866 bytes)
 
 [deliver] 20s left
   1 handset(s):
-    192.168.1.57    6/6 held   (heard 1s ago)
+    192.168.1.57    12/12 held   (heard 1s ago)
 
 [cue] a film, looping — clip.mp4
       /atc/play/flat clip.mp4 1 1.00
@@ -65,6 +83,10 @@ works out where it is in space, and builds the set on top of it.
 ```sh
 python3 ar-set/make-ar-set.py          # anchor, model, films, score, ar-set.json
 ```
+
+It writes `ar-set/demo-triadic-ballet/`, which is already in this repository —
+so you can deliver the set to a phone (below) before installing Blender, and
+run this when you want to change it.
 
 The anchor is drawn to be *findable*: detail everywhere rather than three flat
 shapes, no mirror symmetry (a symmetric design can be recognised the wrong way
@@ -116,7 +138,7 @@ ffmpeg. Takes a couple of seconds.
 ### `drive/` — running a show from Python
 
 ```sh
-python3 drive/atc-drive.py demo-show/show             # deliver, then run
+python3 drive/atc-drive.py demo-show/show ar-set/demo-triadic-ballet
 python3 drive/atc-drive.py demo-show/show --deliver   # deliver only
 python3 drive/atc-drive.py demo-show/show --listen    # just watch the phones
 ```
@@ -129,6 +151,13 @@ A minimal control app in one file, no dependencies. It:
 * **listens** on the telemetry port for `/atc/holding` and `/atc/progress`, and
   prints how many assets each handset holds and what it is still fetching;
 * **fires the cues** in order, printing each one as it goes on the wire.
+
+An AR set folder is handled the way the Dashboard's importer handles it: the
+pieces are delivered as ordinary assets, and the `.atcset` document that ties
+them together — which drawing, which model, which film on which surface, how
+wide the paper is — is written here and delivered with them. Without it the
+phone holds the files and has nothing to do with them, and `/atc/raise` finds
+no set.
 
 Assets are identified by **SHA-256** of their bytes; a phone never downloads a
 hash it already has. Cues are broadcast to the interface's own broadcast
@@ -156,7 +185,9 @@ half is scattered through the room rather than one block of seats), an int is
 the loop regime (`0` plays once and holds the last frame).
 
 Delivery is separate from cueing: a cue only tells a phone to show something it
-already holds. Deliver first — with the Dashboard, or with `atc-drive.py`.
+already holds. Deliver first — with the Dashboard, or with `atc-drive.py`. The
+name after `/atc/raise` is the set's id, which is the folder's name in lower
+case; `atc-drive.py` prints it as it delivers.
 
 ## Licence
 
