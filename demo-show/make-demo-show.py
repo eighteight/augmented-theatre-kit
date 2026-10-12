@@ -10,7 +10,7 @@ whole show can be published, forked and rebuilt without asking anyone.
 Needs ffmpeg on PATH for the moving pictures, and Blender for the AR set (see
 ../ar-set). Everything else is plain Python.
 """
-import json, math, os, struct, subprocess, sys, wave, zlib
+import json, math, os, shutil, struct, subprocess, sys, wave, zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # Beside the script, not beside the shell, so the command in the README
@@ -136,7 +136,31 @@ ffmpeg(["-f", "lavfi", "-i", "color=c=0xedebe0:s=480x480:d=4:r=12",
 for tmp in ("chime.wav", "voice.wav"):
     os.path.exists(p(tmp)) and os.remove(p(tmp))
 
-print("\n  the show's media:")
+# ------------------------------------------------------------------ the AR set
+# A show is not only flat media, and the set is part of this one. It is copied
+# in rather than rebuilt: it is committed to this repository already, and
+# rebuilding it needs Blender. The driver reads any folder here holding an
+# ar-set.json as a set, so one command now delivers the whole show.
+src = os.path.join(HERE, os.pardir, "ar-set", "demo-triadic-ballet")
+if os.path.isdir(src):
+    dst = p(os.path.basename(src))
+    shutil.rmtree(dst, ignore_errors=True)
+    # Only what the set is made of: a working copy may also hold the .blend the
+    # figure was modelled in, which no phone has any use for.
+    shutil.copytree(src, dst, ignore=shutil.ignore_patterns(
+        "*.blend", "*.blend1", "__pycache__", ".*"))
+    say(f"copied the AR set in: {os.path.basename(src)}/")
+else:
+    say("no AR set beside this script — build one with ../ar-set/make-ar-set.py")
+
+print("\n  the show:")
 for f in sorted(os.listdir(OUT)):
-    print(f"    {f:<18} {os.path.getsize(p(f)):>9,} bytes")
-print("\n  next: build the AR set with ../ar-set, then drive it with ../drive/atc-drive.py")
+    full = p(f)
+    if os.path.isdir(full):
+        inner = sorted(os.listdir(full))
+        size = sum(os.path.getsize(os.path.join(full, i)) for i in inner)
+        print(f"    {f + '/':<18} {size:>9,} bytes   AR set: {', '.join(inner)}")
+    else:
+        print(f"    {f:<18} {os.path.getsize(full):>9,} bytes")
+print(f"\n  next: python3 {os.path.relpath(os.path.join(HERE, os.pardir, 'drive', 'atc-drive.py'))} "
+      f"{os.path.relpath(OUT)}")

@@ -11,6 +11,7 @@ tell the difference.
     python3 atc-drive.py ../demo-show/show ../ar-set/demo-triadic-ballet
     python3 atc-drive.py ../demo-show/show --deliver     deliver and wait, no cues
     python3 atc-drive.py ../demo-show/show --listen      just watch the telemetry
+    python3 atc-drive.py ../demo-show/show --wait=60     less patience with the room
 
 When a set is raised the drawing it stands on is opened here, so a phone can
 find it on this screen with nothing printed. The set is scaled against the
@@ -32,6 +33,10 @@ import hashlib, http.server, json, mimetypes, os, socket, socketserver, struct
 import shutil, subprocess, sys, tempfile, threading, time
 
 CUE_PORT, TELEMETRY_PORT, HTTP_PORT = 3000, 3001, 8090
+# What the handsets file this show under. One name, used by the manifest
+# cue and by every inventory question, or a phone reports on a show it was
+# never sent and the counts stay at zero.
+SHOW_ID = "demo"
 
 # --------------------------------------------------------------------- OSC 1.0
 def _pad(b):
@@ -467,8 +472,17 @@ class House:
         return devices
 
 # ------------------------------------------------------------------ the cues
-def deliver(send, show, house, seconds=25):
-    """Put the show on the handsets and wait for them to say they have it."""
+def deliver(send, show, house, seconds=240):
+    """Put the show on the handsets and wait until they say they hold it.
+
+    Worth knowing before watching this: pre-staging is deliberately unhurried.
+    A handset sleeps a random moment of up to 30 seconds before it so much as
+    fetches the manifest, and another up to 2 seconds before each asset, so a
+    full house does not arrive on the server at once. A show of a dozen assets
+    is therefore a minute or so away even on an empty network, and raising a
+    set before it has landed does nothing at all — which is what this wait is
+    for.
+    """
     print(f"\n[deliver] serving {len(show.assets)} asset(s) on "
           f"http://{my_ip()}:{HTTP_PORT}")
     for a in show.assets:
@@ -480,30 +494,95 @@ def deliver(send, show, house, seconds=25):
         print(f"\n[set] {s.id} — anchor {s.marker} {how} {s.width * 100:g} cm wide, "
               f"model {s.model} at scale {s.scale:g}")
         for film in s.films:
-            how = "from the model" if s.authored else "from ar-set.json"
-            print(f"      {film} plays on the surface named {s.node_of[film]!r} ({how})")
+            where = "from the model" if s.authored else "from ar-set.json"
+            print(f"      {film} plays on the surface named {s.node_of[film]!r} ({where})")
         if s.audio: print(f"      score: {s.audio}")
         print(f"      raise it with:  /atc/raise {s.id}")
 
     # "the manifest changed — sync when convenient"; this is the pre-staging path
-    send.send("/atc/manifest", HTTP_PORT, "demo", TELEMETRY_PORT)
+    send.send("/atc/manifest", HTTP_PORT, SHOW_ID, TELEMETRY_PORT)
     print(f"\n[deliver] /atc/manifest -> {', '.join(send.targets)}:{CUE_PORT}")
-    # and ask what each handset already holds, so the counts start truthful
-    send.send("/atc/inventory", "demo", TELEMETRY_PORT)
+    print(f"[deliver] waiting up to {seconds}s for the room; a handset sleeps up "
+          f"to 30s before\n          it even asks for the manifest. Ctrl-C to go "
+          f"ahead anyway.")
 
-    deadline = time.time() + seconds
-    while time.time() < deadline:
+    wanted = {a["sha256"] for a in show.assets}
+    start, last_ask, last_announce, complained = time.time(), 0.0, time.time(), False
+    while time.time() - start < seconds:
+        now = time.time()
+        # Ask what each handset holds. A phone only reports when asked, so
+        # without this the counts below would never move off zero.
+        if now - last_ask > 4:
+            send.send("/atc/inventory", SHOW_ID, TELEMETRY_PORT)
+            last_ask = now
+        # And say the show is there again, for a handset that was asleep,
+        # out of range or only now launched.
+        if now - last_announce > 30:
+            send.send("/atc/manifest", HTTP_PORT, SHOW_ID, TELEMETRY_PORT)
+            last_announce = now
         time.sleep(5)
-        print(f"\n[deliver] {int(deadline - time.time())}s left")
-        house.report(show)
+
+        print(f"\n[deliver] {int(time.time() - start)}s gone")
+        devices = house.report(show)
+        if devices and all(wanted <= set(d["holding"]) for d in devices.values()):
+            print(f"\n[deliver] every handset that answered holds the whole show")
+            return devices
+        if not devices and not complained and time.time() - start > 45:
+            complained = True
+            print(f"""
+  Nothing has answered in 45 seconds. Worth checking, in this order:
+    · the audience app is open and in front — it does not listen in the background
+    · the phone and this computer are on the same Wi-Fi, and that the network
+      does not isolate clients from each other (most guest and hotel ones do)
+    · nothing else holds UDP {TELEMETRY_PORT}: if the Dashboard is running, the replies
+      are going to it rather than here
+    · this machine is really {my_ip()} — if it has two interfaces, the cue may be
+      going out of the wrong one""")
+    print(f"\n[deliver] gave up waiting after {seconds}s")
     return house.devices
 
-def cue(send, label, address, *args, hold=4.0):
+def cue(send, label, address, *args, hold=4.0, title=None, announce=True):
+    """Fire one cue — and say on the phones what is about to happen.
+
+    The description goes out first as /title/1, which writes a line across the
+    top of the handset over whatever is already there. It makes the demo
+    readable from the phone rather than from this terminal, and it is the
+    quickest way to tell a cue that did not arrive from one that arrived and
+    found nothing to do: the words appear either way.
+    """
     shown = " ".join(f"{a:.2f}" if isinstance(a, float) else str(a) for a in args)
     print(f"\n[cue] {label}")
+    if announce:
+        words = title if title is not None else label
+        print(f"      /title/1 {words!r}")
+        send.send("/title/1", words)
+        time.sleep(1.6)
     print(f"      {address} {shown}")
     send.send(address, *args)
     time.sleep(hold)
+
+def warn_if_not_held(house, show, arset):
+    """Say so before raising a set the phones have not finished fetching.
+
+    /atc/raise on a set whose pieces are not all in the cache does nothing at
+    all — the handset logs a line and the screen stays as it was. That is
+    indistinguishable from a broken cue unless someone says it here.
+    """
+    if not house: return
+    pieces = {a["sha256"]: a["name"] for a in show.assets if a["set"] == arset.id}
+    with house.lock:
+        devices = {k: dict(v) for k, v in house.devices.items()}
+    if not devices:
+        print("      no handset has said what it holds, so whether this will "
+              "raise is unknown")
+        return
+    for did, d in sorted(devices.items(), key=lambda kv: kv[1]["ip"]):
+        short = [n for sha, n in pieces.items() if sha not in d["holding"]]
+        if short:
+            print(f"      {d['ip']} is still short of {len(short)} piece(s): "
+                  f"{', '.join(short[:4])} — it will not raise there")
+        else:
+            print(f"      {d['ip']} holds the whole set")
 
 def run_show(send, show, house, marker=True):
     """One pass through everything the app can be asked to do."""
@@ -511,7 +590,8 @@ def run_show(send, show, house, marker=True):
     sphere = show.find("360");    gif = show.find("loop.gif")
     chime  = show.find("chime");  voice = show.find("voice")
 
-    cue(send, "house lights: bring every phone into the show", "/atc/show", "", hold=2)
+    cue(send, "the show begins", "/title/1",
+        "Augmented Theatre — the demo show", hold=3, announce=False)
     if poster: cue(send, f"a still on every screen — {poster['name']}",
                    "/atc/play", poster["name"], 1, 1.0, hold=5)
     if gif:    cue(send, f"an animated image — {gif['name']}",
@@ -534,17 +614,21 @@ def run_show(send, show, house, marker=True):
         cue(send, f"{look} off", "/atc/effect", look, 0, 1.0, hold=1)
     for s in show.sets:
         print(f"\n[set] {s.id} is about to be raised")
+        warn_if_not_held(house, show, s)
         if marker: show_marker(s)
         cue(send, f"an AR set stands up on its anchor — {s.id} "
                   f"(point the phone at {s.marker})",
-            # long enough to put the phone down on the keyboard, pick it up
-            # again and find the picture
-            "/atc/raise", s.id, 1.0, hold=20)
+            "/atc/raise", s.id, 1.0, hold=20,
+            # the phone's title line is one line; the long version above is for
+            # whoever is reading this terminal. The hold is long enough to put
+            # the phone down, pick it up again and find the picture.
+            title=f"point the phone at the picture — {s.id}")
         cue(send, "and is struck", "/atc/strike", hold=2)
     if not show.sets:
         print("\n[cue] no AR set was delivered, so nothing is raised — pass a "
               "folder\n      holding an ar-set.json to deliver one.")
     cue(send, "back to the foyer", "/atc/stop", "", hold=1)
+    send.send("/title/1", "")          # and the last line comes off the screen
     print("\n[done] the show has run")
 
 def main():
@@ -558,6 +642,11 @@ def main():
         try: width_cm = float(width_cm)
         except ValueError:
             print(f"  ! --marker-cm wants a number of centimetres"); return 2
+
+    wait = next((f.split("=", 1)[1] for f in flags if f.startswith("--wait=")), None)
+    try: wait = float(wait) if wait is not None else None
+    except ValueError:
+        print("  ! --wait wants a number of seconds"); return 2
 
     show = Show(args, width_cm)
     if not show.assets:
@@ -593,7 +682,7 @@ def main():
             print("\n[listen] watching the telemetry; ctrl-C to stop")
             while True:
                 time.sleep(5); print(); house.report(show)
-        deliver(send, show, house)
+        deliver(send, show, house, *( (wait,) if wait is not None else () ))
         if "--deliver" in flags:
             print("\n[deliver] done; not running the cues (--deliver)")
             return 0

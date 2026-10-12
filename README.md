@@ -26,15 +26,29 @@ phone and your computer on the **same Wi-Fi**, and Python 3. Nothing else: the
 AR set is committed, built.
 
 ```sh
-python3 demo-show/make-demo-show.py                                  # the media
-python3 drive/atc-drive.py demo-show/show ar-set/demo-triadic-ballet # deliver, then run
+python3 demo-show/make-demo-show.py            # writes demo-show/show/
+python3 drive/atc-drive.py demo-show/show      # delivers it, then runs the show
 ```
 
-The first command needs `ffmpeg`; it writes `demo-show/show/`. The second takes
-any number of folders — a folder holding an `ar-set.json` is an AR set, and
-anything else is a folder of media. When the set is raised the drawing it
-stands on is opened on this computer, so you can point the phone at the screen
-with nothing printed.
+The first command needs `ffmpeg`. It synthesises the media and copies the AR
+set in beside it, so the show is one folder and the second command is one
+command: a folder holding an `ar-set.json` is read as a set, anything else as
+media, and the driver takes any number of either. When the set is raised the
+drawing it stands on is opened on this computer, so you can point the phone at
+the screen with nothing printed.
+
+**Give it time.** Pre-staging is deliberately unhurried — a handset sleeps a
+random moment of up to 30 seconds before it so much as asks for the manifest,
+and up to 2 more before each asset, so that a full house does not arrive on the
+server at once. The driver waits for the phones to say they hold everything
+before it runs a cue, and prints what each one is still fetching. Raising a set
+whose pieces have not all landed does nothing at all, silently, which looks
+exactly like a broken cue.
+
+Each cue is also announced on the phones themselves, as a line across the top,
+before it fires — so the demo reads from the handset rather than from this
+terminal, and a cue that arrived but found nothing to do can be told from one
+that never arrived: the words appear either way.
 
 The set is scaled against the width of that drawing. Printed at 21 cm square it
 is right as it stands; on a screen it is whatever size that screen makes it, so
@@ -68,14 +82,19 @@ Augmented Theatre, driven from Python
       raise it with:  /atc/raise demo-triadic-ballet
 
 [deliver] /atc/manifest -> 192.168.1.255, 255.255.255.255:3000
+[deliver] waiting up to 240s for the room; a handset sleeps up to 30s before
+          it even asks for the manifest. Ctrl-C to go ahead anyway.
     -> 192.168.1.57 fetched the manifest
     -> 192.168.1.57 took clip.mp4 (456,866 bytes)
 
-[deliver] 20s left
+[deliver] 35s gone
   1 handset(s):
     192.168.1.57    12/12 held   (heard 1s ago)
 
+[deliver] every handset that answered holds the whole show
+
 [cue] a film, looping — clip.mp4
+      /title/1 'a film, looping — clip.mp4'
       /atc/play/flat clip.mp4 1 1.00
 ```
 
@@ -138,15 +157,17 @@ python3 demo-show/make-demo-show.py [outdir]
 
 Writes a still, an animated GIF, a flat film, an equirectangular 360 film, a
 chime and a voice — one of each kind the app can present, so every cue path
-gets exercised. The PNG is written byte by byte in pure Python; the rest is
-ffmpeg. Takes a couple of seconds.
+gets exercised — and copies `ar-set/demo-triadic-ballet` in beside them, since
+a set is part of a show like anything else. The PNG is written byte by byte in
+pure Python; the rest is ffmpeg. Takes a couple of seconds.
 
 ### `drive/` — running a show from Python
 
 ```sh
-python3 drive/atc-drive.py demo-show/show ar-set/demo-triadic-ballet
+python3 drive/atc-drive.py demo-show/show             # deliver, then run
 python3 drive/atc-drive.py demo-show/show --deliver   # deliver only
 python3 drive/atc-drive.py demo-show/show --listen    # just watch the phones
+python3 drive/atc-drive.py … --wait=60                # less patience with the room
 python3 drive/atc-drive.py … --marker-cm=14.5         # the drawing, measured
 python3 drive/atc-drive.py … --no-marker              # leave this screen alone
 ```
@@ -158,8 +179,9 @@ A minimal control app in one file, no dependencies. It:
 * **tells the phones to fetch it** with `/atc/manifest`, the pre-staging cue;
 * **listens** on the telemetry port for `/atc/holding` and `/atc/progress`, and
   prints how many assets each handset holds and what it is still fetching;
-* **fires the cues** in order, printing each one as it goes on the wire, and
-  opens a set's drawing on this screen as that set is raised.
+* **fires the cues** in order, each announced on the handsets first as a title
+  line, printing each one as it goes on the wire, and opens a set's drawing on
+  this screen as that set is raised.
 
 An AR set folder is handled the way the Dashboard's importer handles it: the
 pieces are delivered as ordinary assets, and the `.atcset` document that ties
