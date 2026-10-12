@@ -1,0 +1,8 @@
+# Build output. Everything here is produced by the scripts in this repo:
+#   demo-show/make-demo-show.py   ->  demo-show/show/
+# The AR set is committed instead, because it needs Blender to rebuild and
+# most people will want to try it before installing anything.
+demo-show/show/
+*.blend
+*.blend1
+__pycache__/

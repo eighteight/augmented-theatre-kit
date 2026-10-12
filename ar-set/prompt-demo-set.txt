@@ -1,0 +1,100 @@
+Write a Blender 4.x/5.x Python script that builds the Augmented Theatre demo
+AR set and exports it. Run it headless:
+
+    blender -b --python this-script.py -- stage.glb
+
+The set is a figure in Oskar Schlemmer's Triadic Ballet costume vocabulary:
+geometric solids rather than a human silhouette, standing on a black disc,
+turning through a slow pavane, with a video screen behind each shoulder.
+
+SCENE
+Metric units, metres. Blender's own Z-up. The anchor lies flat at the origin
+and the set faces -Y, towards the viewer.
+
+PALETTE (Principled BSDF base colours, roughness 0.6; gold is metallic 0.9,
+roughness 0.35)
+    red    0.78 0.12 0.09      white  0.93 0.92 0.88
+    yellow 0.95 0.75 0.08      black  0.07 0.07 0.08
+    blue   0.09 0.24 0.58      gold   0.80 0.62 0.22
+
+Build each solid from a unit primitive (sphere radius 0.5, 28 segments and 14
+rings; cone radius1 0.5 radius2 0 depth 1, 28 vertices; cylinder radius 0.5
+depth 1, 28 vertices; disc the same with 36), then set its scale to the size
+below and apply the transform. Shade smooth.
+
+THE STAGE
+plinth   disc     at (0, 0, 0.003)   scale (0.17,  0.17,  0.006)  black
+
+TWO SCREENS — the names are the contract; the app binds a film to each by name
+Each is a plane of size 1 at z 0.085, y 0.058, rotated 90 deg about X and
+yawed about Z, scaled (0.095, 0.053, 1), transform applied, UV-unwrapped
+(angle based), white material, and carrying a custom property "video" whose
+value is the object's name plus ".mp4".
+    screen-left    x -0.056   yaw  +16 deg
+    screen-right   x  0.056   yaw  -16 deg
+
+THE FIGURE — twelve solids, joined into one mesh named "figure"
+    skirt    cone      (0,      0, 0.038)  (0.088, 0.088, 0.076)  red
+    hips     sphere    (0,      0, 0.082)  (0.052, 0.046, 0.046)  yellow
+    torso    cylinder  (0,      0, 0.116)  (0.050, 0.042, 0.052)  blue
+    ruff     disc      (0,      0, 0.144)  (0.072, 0.072, 0.008)  white
+    head     sphere    (0,      0, 0.168)  (0.040, 0.038, 0.042)  white
+    hat      cone      (0,      0, 0.196)  (0.036, 0.036, 0.034)  gold
+    joint_L  sphere    ( 0.034, 0, 0.134)  (0.020, 0.020, 0.020)  gold
+    joint_R  sphere    (-0.034, 0, 0.134)  (0.020, 0.020, 0.020)  gold
+    arm_L    cylinder  ( 0.034, 0, 0.108)  (0.015, 0.015, 0.048)  yellow
+    arm_R    cylinder  (-0.034, 0, 0.108)  (0.015, 0.015, 0.048)  yellow
+    leg_L    cylinder  ( 0.016, 0, 0.022)  (0.017, 0.017, 0.044)  black
+    leg_R    cylinder  (-0.016, 0, 0.022)  (0.017, 0.017, 0.044)  black
+
+THE ARMATURE — object named "rig", eleven bones, head and tail in metres
+    root          (0,      0, 0.100) -> (0,      0, 0.060)
+    spine         (0,      0, 0.100) -> (0,      0, 0.150)   parent root
+    head          (0,      0, 0.150) -> (0,      0, 0.200)   parent spine, connected
+  for s in L (x +1) and R (x -1):
+    shoulder.s    ( 0.034x, 0, 0.140) -> ( 0.034x, 0, 0.132)  parent spine
+    arm.s         ( 0.034x, 0, 0.132) -> ( 0.034x, 0, 0.086)  parent shoulder.s, connected
+    hip.s         ( 0.016x, 0, 0.060) -> ( 0.016x, 0, 0.044)  parent root
+    leg.s         ( 0.016x, 0, 0.044) -> ( 0.016x, 0, 0.000)  parent hip.s, connected
+
+Then skin the figure to the rig with automatic weights, falling back to
+envelope weights if that raises RuntimeError.
+
+Every animated bone points the same way as its parent, so its rest rotation is
+identity. That is deliberate: a limb pointing down from a parent pointing up
+sits at exactly 180 deg, the quaternion antipode, and a swing about it makes
+the exporter write the same orientation with opposite signs on consecutive
+keys. glTF interpolates rotations linearly, so the limb takes the long way
+round. Do not "tidy" the skeleton by pointing limbs downwards.
+
+THE PAVANE — frames 0 to 96, a key every 4 frames, all keys LINEAR
+With t = (frame / 96) * 2*pi, rotation_mode 'XYZ':
+    root  rotation_euler.z = sin(t) * radians(45)
+    root  location.z       = abs(sin(2t)) * 0.004
+    arm.L rotation_euler.x = sin(t)       * radians(20)
+    arm.R rotation_euler.x = sin(t + pi)  * radians(20)
+    leg.L rotation_euler.x = sin(2t)      * radians(12)
+    leg.R rotation_euler.x = sin(2t + pi) * radians(12)
+Name the action "pavane".
+
+A sway, never a revolution: a full turn passes through 180 deg where the
+exporter canonicalises the quaternion to w >= 0 and flips its sign, and the
+figure whips round once per turn. Plus or minus 45 deg keeps the half-angle
+under 23 and never goes near it.
+
+EXPORT
+glTF Binary to the path given after "--", with +Y Up OFF (the phones want
+Z-up and do the turn themselves), Include Custom Properties ON (or the video
+bindings are dropped), animations and skins ON, modifiers applied.
+
+API NOTE: from Blender 4.4 an Action no longer has .fcurves. To set the key
+interpolation, walk action.layers -> strips -> channelbags -> fcurves, and
+fall back to action.fcurves when that attribute is absent, so the script runs
+on either version.
+
+Finally, write ar-set.json beside the .glb:
+
+  {"marker": "marker.jpg", "model": "stage.glb", "audio": "music.m4a",
+   "widthMeters": 0.21, "scale": 1.0,
+   "projections": {"screen-left": "screen-left.mp4",
+                   "screen-right": "screen-right.mp4"}}

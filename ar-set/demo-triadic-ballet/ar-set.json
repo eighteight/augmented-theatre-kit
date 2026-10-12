@@ -1,0 +1,11 @@
+{
+  "marker": "marker.jpg",
+  "model": "stage.glb",
+  "audio": "music.m4a",
+  "widthMeters": 0.21,
+  "scale": 1.0,
+  "projections": {
+    "screen-left": "screen-left.mp4",
+    "screen-right": "screen-right.mp4"
+  }
+}
