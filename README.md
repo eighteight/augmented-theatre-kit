@@ -32,8 +32,14 @@ python3 drive/atc-drive.py demo-show/show ar-set/demo-triadic-ballet # deliver, 
 
 The first command needs `ffmpeg`; it writes `demo-show/show/`. The second takes
 any number of folders — a folder holding an `ar-set.json` is an AR set, and
-anything else is a folder of media. Print `ar-set/demo-triadic-ballet/marker.jpg`
-at 21 cm square and hold it in front of the phone when the set is raised.
+anything else is a folder of media. When the set is raised the drawing it
+stands on is opened on this computer, so you can point the phone at the screen
+with nothing printed.
+
+The set is scaled against the width of that drawing. Printed at 21 cm square it
+is right as it stands; on a screen it is whatever size that screen makes it, so
+measure the picture and say what you measured — `--marker-cm=14.5` — or the
+figure stands too large or too small.
 
 To rebuild the AR set yourself you also need [Blender](https://www.blender.org/download/)
 (free):
@@ -141,6 +147,8 @@ ffmpeg. Takes a couple of seconds.
 python3 drive/atc-drive.py demo-show/show ar-set/demo-triadic-ballet
 python3 drive/atc-drive.py demo-show/show --deliver   # deliver only
 python3 drive/atc-drive.py demo-show/show --listen    # just watch the phones
+python3 drive/atc-drive.py … --marker-cm=14.5         # the drawing, measured
+python3 drive/atc-drive.py … --no-marker              # leave this screen alone
 ```
 
 A minimal control app in one file, no dependencies. It:
@@ -150,7 +158,8 @@ A minimal control app in one file, no dependencies. It:
 * **tells the phones to fetch it** with `/atc/manifest`, the pre-staging cue;
 * **listens** on the telemetry port for `/atc/holding` and `/atc/progress`, and
   prints how many assets each handset holds and what it is still fetching;
-* **fires the cues** in order, printing each one as it goes on the wire.
+* **fires the cues** in order, printing each one as it goes on the wire, and
+  opens a set's drawing on this screen as that set is raised.
 
 An AR set folder is handled the way the Dashboard's importer handles it: the
 pieces are delivered as ordinary assets, and the `.atcset` document that ties

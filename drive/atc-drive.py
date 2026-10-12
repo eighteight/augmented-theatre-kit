@@ -12,6 +12,11 @@ tell the difference.
     python3 atc-drive.py ../demo-show/show --deliver     deliver and wait, no cues
     python3 atc-drive.py ../demo-show/show --listen      just watch the telemetry
 
+When a set is raised the drawing it stands on is opened here, so a phone can
+find it on this screen with nothing printed. The set is scaled against the
+width of that drawing, so measure the picture on the screen and say what it
+is: --marker-cm=14.5. --no-marker leaves the screen alone.
+
 Give it any number of folders. A folder holding an ar-set.json is an AR set:
 its pieces are delivered and the little .atcset document that ties them
 together is written here, exactly as the Dashboard writes it, so /atc/raise
@@ -24,7 +29,7 @@ Ports (the app's defaults): cues go out on 3000, handsets report on 3001, and
 the media is served on 8090.
 """
 import hashlib, http.server, json, mimetypes, os, socket, socketserver, struct
-import sys, threading, time
+import shutil, subprocess, sys, tempfile, threading, time
 
 CUE_PORT, TELEMETRY_PORT, HTTP_PORT = 3000, 3001, 8090
 
@@ -177,7 +182,7 @@ class ArSet:
     SOUNDS = ("m4a", "mp3", "wav", "aac", "ogg", "caf")
     FILMS  = ("mp4", "mov", "m4v")
 
-    def __init__(self, folder):
+    def __init__(self, folder, width_cm=None):
         self.folder = os.path.abspath(folder)
         self.title  = os.path.basename(self.folder)
         self.id     = self.title.lower()
@@ -203,6 +208,12 @@ class ArSet:
         self.films  = [n for n in files if ext_of(n) in self.FILMS]
         self.width  = float(side.get("widthMeters") or 0.21)
         self.scale  = float(side.get("scale") or 1.0)
+        # The set is scaled against the width of the drawing *as the audience
+        # holds it*. A picture shown on a screen instead of printed is whatever
+        # size that screen makes it, so the measured width replaces the
+        # authored one — otherwise the figure stands at the wrong size.
+        self.measured = width_cm is not None
+        if self.measured: self.width = float(width_cm) / 100.0
 
         # Which film goes on which surface: the model's own word first, then
         # ar-set.json, then a film named after the surface.
@@ -237,10 +248,62 @@ class ArSet:
         if self.audio: one["audio"] = {"sha256": sha_of(self.audio)}
         return json.dumps({"version": 1, "sets": [one]}).encode()
 
+def open_on_this_computer(path):
+    """Hand a file to whatever this desktop opens it with."""
+    try:
+        if sys.platform == "darwin":   subprocess.run(["open", path], check=True)
+        elif os.name == "nt":          os.startfile(path)              # noqa: S606
+        else:                          subprocess.run(["xdg-open", path], check=True)
+        return True
+    except Exception as e:
+        print(f"      (could not open it here: {e})")
+        return False
+
+def show_marker(arset):
+    """Put the drawing on this screen, for a phone with nothing printed to find.
+
+    The page asks the browser for the drawing at its declared printed width.
+    CSS centimetres are a fixed 96 px to the inch, which is not any particular
+    monitor, so the picture arrives near the right size rather than at it — and
+    the caption says to measure it, because that number is what the set is
+    scaled against.
+    """
+    cm = round(arset.width * 100, 2)   # 0.145 m is 14.5 cm, not 14.499999
+    # The picture is copied beside the page and asked for by name: a browser
+    # showing a local file is not always allowed to reach back out of its own
+    # folder for one.
+    here = tempfile.mkdtemp(prefix="atc-marker-")
+    marker = os.path.join(here, arset.marker)
+    shutil.copyfile(os.path.join(arset.folder, arset.marker), marker)
+    page = os.path.join(here, "marker.html")
+    with open(page, "w") as f:
+        f.write(f"""<!doctype html><meta charset="utf-8">
+<title>{arset.id} — point the phone at this</title>
+<style>
+ html,body{{margin:0;height:100%;background:#111;color:#bbb;
+   font:13px/1.5 ui-sans-serif,system-ui,sans-serif;
+   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px}}
+ img{{width:{cm:g}cm;max-width:92vw;max-height:72vh;image-rendering:crisp-edges;
+   box-shadow:0 0 0 1px #333}}
+ p{{margin:0;text-align:center;max-width:36em}}
+ b{{color:#eee}}
+</style>
+<img src="{arset.marker}" alt="the anchor for {arset.id}">
+<p><b>{arset.id}</b> — hold the phone up to this picture.</p>
+<p>The set is scaled against a drawing <b>{cm:g} cm</b> wide. Measure the
+picture on this screen; if it is not that, re-run with
+<b>--marker-cm=&lt;what you measured&gt;</b>, or print it instead.</p>
+""")
+    print(f"      showing {arset.marker} on this computer "
+          f"({cm:g} cm wide as declared)")
+    if not open_on_this_computer(page):
+        open_on_this_computer(marker)
+    return page
+
 class Show:
     """The media on disk, hashed the way the handsets identify it."""
-    def __init__(self, paths):
-        self.assets, self.sets = [], []
+    def __init__(self, paths, width_cm=None):
+        self.assets, self.sets, self.width_cm = [], [], width_cm
         for path in paths:
             path = os.path.abspath(path)
             if not os.path.isdir(path):
@@ -271,7 +334,7 @@ class Show:
         return self.add(os.path.basename(path), open(path, "rb").read(), path, set_id)
 
     def add_set(self, folder):
-        s = ArSet(folder)
+        s = ArSet(folder, self.width_cm)
         trouble = s.problems()
         if trouble:
             for t in trouble: print(f"  ! {s.id}: {t}")
@@ -413,7 +476,8 @@ def deliver(send, show, house, seconds=25):
         print(f"    {a['name']:<20} {a['size']:>9,} b  {a['mime']:<28} "
               f"{a['sha256'][:12]}…{owner}")
     for s in show.sets:
-        print(f"\n[set] {s.id} — anchor {s.marker} printed {s.width * 100:.0f} cm wide, "
+        how = "measured on screen" if s.measured else "printed"
+        print(f"\n[set] {s.id} — anchor {s.marker} {how} {s.width * 100:g} cm wide, "
               f"model {s.model} at scale {s.scale:g}")
         for film in s.films:
             how = "from the model" if s.authored else "from ar-set.json"
@@ -441,7 +505,7 @@ def cue(send, label, address, *args, hold=4.0):
     send.send(address, *args)
     time.sleep(hold)
 
-def run_show(send, show, house):
+def run_show(send, show, house, marker=True):
     """One pass through everything the app can be asked to do."""
     poster = show.find("poster"); clip = show.find("clip.mp4")
     sphere = show.find("360");    gif = show.find("loop.gif")
@@ -469,9 +533,13 @@ def run_show(send, show, house):
             "/atc/effect", look, 1, 1.0, hold=5)
         cue(send, f"{look} off", "/atc/effect", look, 0, 1.0, hold=1)
     for s in show.sets:
+        print(f"\n[set] {s.id} is about to be raised")
+        if marker: show_marker(s)
         cue(send, f"an AR set stands up on its anchor — {s.id} "
-                  f"(hold the printed {s.marker} in front of the phone)",
-            "/atc/raise", s.id, 1.0, hold=12)
+                  f"(point the phone at {s.marker})",
+            # long enough to put the phone down on the keyboard, pick it up
+            # again and find the picture
+            "/atc/raise", s.id, 1.0, hold=20)
         cue(send, "and is struck", "/atc/strike", hold=2)
     if not show.sets:
         print("\n[cue] no AR set was delivered, so nothing is raised — pass a "
@@ -484,7 +552,14 @@ def main():
     flags = {a for a in sys.argv[1:] if a.startswith("--")}
     if not args:
         print(__doc__); return 2
-    show = Show(args)
+
+    width_cm = next((f.split("=", 1)[1] for f in flags if f.startswith("--marker-cm=")), None)
+    if width_cm is not None:
+        try: width_cm = float(width_cm)
+        except ValueError:
+            print(f"  ! --marker-cm wants a number of centimetres"); return 2
+
+    show = Show(args, width_cm)
     if not show.assets:
         print(f"nothing to deliver in {', '.join(args)} — "
               f"run ../demo-show/make-demo-show.py first")
@@ -522,7 +597,7 @@ def main():
         if "--deliver" in flags:
             print("\n[deliver] done; not running the cues (--deliver)")
             return 0
-        run_show(send, show, house)
+        run_show(send, show, house, marker="--no-marker" not in flags)
         print()
         house.report(show)
     except KeyboardInterrupt:
