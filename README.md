@@ -26,9 +26,16 @@ phone and your computer on the **same Wi-Fi**, and Python 3. Nothing else: the
 AR set is committed, built.
 
 ```sh
-python3 demo-show/make-demo-show.py            # writes demo-show/show/
-python3 drive/atc-drive.py demo-show/show      # delivers it, then runs the show
+python3 demo-show/make-demo-show.py                   # the media, and the AR set
+python3 drive/atc-drive.py demo-show/show --deliver   # walk-in: onto the phones
+python3 drive/atc-drive.py demo-show/show --run       # curtain: run the show
 ```
+
+Delivery and running are separate commands because they are separate events in
+a theatre: the show goes onto the phones during walk-in, over minutes, and the
+cues are fired at curtain. Either can be repeated on its own — deliver again
+for a phone that arrived late, run again for the second house. Leaving both
+flags off does one and then the other, which is for trying it at a desk.
 
 The first command needs `ffmpeg`. It synthesises the media and copies the AR
 set in beside it, so the show is one folder and the second command is one
@@ -164,13 +171,20 @@ pure Python; the rest is ffmpeg. Takes a couple of seconds.
 ### `drive/` — running a show from Python
 
 ```sh
-python3 drive/atc-drive.py demo-show/show             # deliver, then run
-python3 drive/atc-drive.py demo-show/show --deliver   # deliver only
+python3 drive/atc-drive.py demo-show/show --deliver   # walk-in: onto the phones
+python3 drive/atc-drive.py demo-show/show --run       # curtain: run the show
+python3 drive/atc-drive.py demo-show/show             # both, one after the other
 python3 drive/atc-drive.py demo-show/show --listen    # just watch the phones
+python3 drive/atc-drive.py demo-show/show --raise     # the AR set, and nothing else
 python3 drive/atc-drive.py … --wait=60                # less patience with the room
 python3 drive/atc-drive.py … --marker-cm=14.5         # the drawing, measured
 python3 drive/atc-drive.py … --no-marker              # leave this screen alone
 ```
+
+`--deliver` says what it actually achieved — a phone that never answered has
+not been delivered to, and it says that rather than claiming otherwise. `--run`
+asks the house what it holds, prints the answer and then cues, without waiting
+for anybody: at curtain the show starts.
 
 A minimal control app in one file, no dependencies. It:
 

@@ -7,12 +7,17 @@ order and prints what the room is doing. Nothing here is a mock. It speaks the
 same OSC and the same HTTP the Dashboard speaks, so the audience app cannot
 tell the difference.
 
-    python3 atc-drive.py ../demo-show/show                deliver, then run it
-    python3 atc-drive.py ../demo-show/show ../ar-set/demo-triadic-ballet
-    python3 atc-drive.py ../demo-show/show --deliver     deliver and wait, no cues
+    python3 atc-drive.py ../demo-show/show --deliver      put it on the phones
+    python3 atc-drive.py ../demo-show/show --run         then run the show
+    python3 atc-drive.py ../demo-show/show               both, one after the other
     python3 atc-drive.py ../demo-show/show --listen      just watch the telemetry
     python3 atc-drive.py ../demo-show/show --wait=60     less patience with the room
-    python3 atc-drive.py ../demo-show/show --raise       deliver, then raise the set
+    python3 atc-drive.py ../demo-show/show --raise       the AR set, and nothing else
+
+Delivery and running are separate because they are separate in a theatre: the
+show goes onto the phones during walk-in, over minutes, and the cues are fired
+at curtain. --deliver is walk-in, --run is curtain, and either can be repeated
+on its own. Running both in one go is for trying it at a desk.
 
 When a set is raised the drawing it stands on is opened here, so a phone can
 find it on this screen with nothing printed. The set is scaled against the
@@ -699,10 +704,35 @@ def main():
             print("\n[listen] watching the telemetry; ctrl-C to stop")
             while True:
                 time.sleep(5); print(); house.report(show)
-        deliver(send, show, house, *( (wait,) if wait is not None else () ))
+        if "--run" in flags:
+            # Delivery already happened, in its own run. Ask what the house is
+            # holding so the report below is true, and give the answers a
+            # moment to arrive, but announce nothing and wait for nothing:
+            # this is curtain, not walk-in.
+            print("\n[run] not delivering (--run); asking what the house holds")
+            send.send("/atc/inventory", SHOW_ID, TELEMETRY_PORT)
+            time.sleep(2)
+            house.report(show)
+        else:
+            devices = deliver(send, show, house, *( (wait,) if wait is not None else () ))
         if "--deliver" in flags:
-            print("\n[deliver] done; not running the cues (--deliver)")
-            return 0
+            # Said as it is: "delivered" is a claim about phones, and a phone
+            # that never answered has not made it.
+            wanted = {a["sha256"] for a in show.assets}
+            whole = [d for d in devices.values() if wanted <= set(d["holding"])]
+            if not devices:
+                print("\n[deliver] no handset answered — nothing is confirmed on any "
+                      "phone.\n          The app has to be open and in front to hear "
+                      "anything.")
+            elif len(whole) == len(devices):
+                print(f"\n[deliver] {len(whole)} handset(s) hold the whole show")
+            else:
+                print(f"\n[deliver] {len(whole)} of {len(devices)} handset(s) hold the "
+                      f"whole show; the rest are still fetching")
+            print("\n  run it with:")
+            print(f"    python3 {os.path.relpath(sys.argv[0])} "
+                  f"{' '.join(os.path.relpath(a) for a in args)} --run")
+            return 0 if devices else 1
         if "--raise" in flags:
             # Nothing but the set. The looks that come before it in the full
             # run each hold the device's camera, and whether one of them has
