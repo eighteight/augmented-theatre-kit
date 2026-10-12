@@ -12,6 +12,7 @@ tell the difference.
     python3 atc-drive.py ../demo-show/show --deliver     deliver and wait, no cues
     python3 atc-drive.py ../demo-show/show --listen      just watch the telemetry
     python3 atc-drive.py ../demo-show/show --wait=60     less patience with the room
+    python3 atc-drive.py ../demo-show/show --raise       deliver, then raise the set
 
 When a set is raised the drawing it stands on is opened here, so a phone can
 find it on this screen with nothing printed. The set is scaled against the
@@ -584,6 +585,22 @@ def warn_if_not_held(house, show, arset):
         else:
             print(f"      {d['ip']} holds the whole set")
 
+def raise_only(send, show, house, marker=True):
+    """Deliver, then raise the set and nothing else."""
+    if not show.sets:
+        print("\n[cue] there is no AR set in what was given"); return
+    cue(send, "stop whatever is on screen", "/atc/stop", "", hold=2)
+    for s in show.sets:
+        print(f"\n[set] {s.id} is about to be raised")
+        warn_if_not_held(house, show, s)
+        if marker: show_marker(s)
+        cue(send, f"an AR set stands up on its anchor — {s.id}",
+            "/atc/raise", s.id, 1.0, hold=45,
+            title=f"point the phone at the picture — {s.id}")
+        cue(send, "and is struck", "/atc/strike", hold=2)
+    send.send("/title/1", "")
+    print("\n[done]")
+
 def run_show(send, show, house, marker=True):
     """One pass through everything the app can be asked to do."""
     poster = show.find("poster"); clip = show.find("clip.mp4")
@@ -686,7 +703,14 @@ def main():
         if "--deliver" in flags:
             print("\n[deliver] done; not running the cues (--deliver)")
             return 0
-        run_show(send, show, house, marker="--no-marker" not in flags)
+        if "--raise" in flags:
+            # Nothing but the set. The looks that come before it in the full
+            # run each hold the device's camera, and whether one of them has
+            # really let go of it by the time ARKit asks is the first thing to
+            # rule out when a set comes up black.
+            raise_only(send, show, house, marker="--no-marker" not in flags)
+        else:
+            run_show(send, show, house, marker="--no-marker" not in flags)
         print()
         house.report(show)
     except KeyboardInterrupt:
