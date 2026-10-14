@@ -621,7 +621,13 @@ def run_show(send, show, house, marker=True):
     if clip:   cue(send, f"a film, looping — {clip['name']}",
                    "/atc/play/flat", clip["name"], 1, 1.0, hold=8)
     cue(send, "colour: the whole house goes red", "/color/1", 199, 31, 23, hold=3)
-    cue(send, "vibrate", "/vibrate/1", hold=2)
+    # The four numbers are length, delay, repeat and strength, in that order:
+    # a two-second buzz, a quarter-second after the cue, at 40 per cent.
+    cue(send, "a buzz with a shape — 2s, a beat late, at 40%",
+        "/vibrate/1", 2000, 250, 0, 40, hold=4)
+    cue(send, "a buzz that keeps going until it is stopped",
+        "/vibrate/1", 300, 0, 1, 100, hold=4)
+    cue(send, "and stopped", "/vibrate/0", hold=2)
     cue(send, "torch on", "/torch/1", hold=2)
     cue(send, "torch off", "/torch/0", hold=1)
     if chime:  cue(send, f"a sound — {chime['name']}",
