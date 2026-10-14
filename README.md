@@ -214,6 +214,16 @@ wide the paper is — is written here and delivered with them. Without it the
 phone holds the files and has nothing to do with them, and `/atc/raise` finds
 no set.
 
+A folder that **already** holds an `.atcset` is a set the Dashboard wrote, and
+it is served exactly as it lies: the document's digests are the ones the phones
+may already hold, so rewriting it would change its hash for nothing. That means
+a show folder made by the Dashboard — media flat, each set in a folder of its
+own — can be driven from here as it stands:
+
+```sh
+python3 drive/atc-drive.py ~/Shows/The\ Cherry\ Orchard/media
+```
+
 Assets are identified by **SHA-256** of their bytes; a phone never downloads a
 hash it already has. Cues are broadcast to the interface's own broadcast
 address *and* to 255.255.255.255, because the latter follows the default route,

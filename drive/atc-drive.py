@@ -179,8 +179,27 @@ def glb_bindings(path):
     return bound
 
 def is_ar_set(folder):
-    return any(os.path.isfile(os.path.join(folder, n))
-               for n in ("ar-set.json", "set.json"))
+    """A folder that holds a set, whoever made it.
+
+    Two shapes exist. One is a set as it is authored: pieces beside an
+    ar-set.json saying how they fit together. The other is a set as the
+    Dashboard keeps it in a show folder -- the same pieces beside the .atcset
+    document it generated, which says the same thing in digests. Both are
+    sets, so a show folder written by the Dashboard can be driven from here
+    without being rearranged first.
+    """
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return False
+    return any(n in ("ar-set.json", "set.json") or n.endswith(".atcset") for n in names)
+
+def atcset_document(folder):
+    """The Dashboard's own set document in this folder, if that is what it is."""
+    for name in sorted(os.listdir(folder)):
+        if name.endswith(".atcset"):
+            return os.path.join(folder, name)
+    return None
 
 class ArSet:
     """A folder the phone can stand up on a printed picture.
@@ -311,6 +330,36 @@ picture on this screen; if it is not that, re-run with
         open_on_this_computer(marker)
     return page
 
+class DeliveredSet:
+    """A set the Dashboard already resolved: its document is the truth.
+
+    It answers the same few questions ArSet answers -- which file is the
+    drawing, which the model, which films on which surfaces -- so the printing
+    and the cueing below do not care which shape a set arrived in.
+    """
+    def __init__(self, folder, set_id, entry):
+        self.folder = os.path.abspath(folder)
+        self.id = set_id
+        self.title = entry.get("title", set_id)
+        self.width = float((entry.get("marker") or {}).get("widthMeters") or 0.21)
+        self.scale = float((entry.get("model") or {}).get("scale") or 1.0)
+        self.measured = False
+        self.authored = True
+        by_sha = {}
+        for name in sorted(os.listdir(folder)):
+            path = os.path.join(folder, name)
+            if os.path.isfile(path) and not name.startswith("."):
+                by_sha[hashlib.sha256(open(path, "rb").read()).hexdigest()] = name
+        self.marker = by_sha.get((entry.get("marker") or {}).get("sha256"), "")
+        self.model  = by_sha.get((entry.get("model") or {}).get("sha256"), "")
+        self.audio  = by_sha.get((entry.get("audio") or {}).get("sha256"), "")
+        self.films, self.node_of = [], {}
+        for projection in entry.get("projections", []):
+            film = by_sha.get(projection.get("sha256"))
+            if film:
+                self.films.append(film)
+                self.node_of[film] = projection.get("node", "")
+
 class Show:
     """The media on disk, hashed the way the handsets identify it."""
     def __init__(self, paths, width_cm=None):
@@ -345,6 +394,14 @@ class Show:
         return self.add(os.path.basename(path), open(path, "rb").read(), path, set_id)
 
     def add_set(self, folder):
+        # A set the Dashboard wrote already carries its own .atcset document,
+        # with every digest resolved. Nothing here can improve on it, and
+        # rewriting it would change its hash for no reason, so the pieces and
+        # the document are served exactly as they lie.
+        document = atcset_document(folder)
+        if document:
+            self.add_dashboard_set(folder, document)
+            return
         s = ArSet(folder, self.width_cm)
         trouble = s.problems()
         if trouble:
@@ -357,6 +414,19 @@ class Show:
         doc = s.document(lambda n: sha.get(n, ""))
         self.add(s.id + ".atcset", doc, None, s.id)
         self.sets.append(s)
+
+    def add_dashboard_set(self, folder, document):
+        try:
+            entry = json.load(open(document))["sets"][0]
+            set_id = entry["id"]
+        except Exception as e:
+            print(f"  ! {os.path.basename(document)} is not a set document ({e})")
+            return
+        for name in sorted(os.listdir(folder)):
+            path = os.path.join(folder, name)
+            if os.path.isfile(path) and not name.startswith("."):
+                self.add_file(path, set_id=set_id)
+        self.sets.append(DeliveredSet(folder, set_id, entry))
 
     def by_mime(self, prefix):
         return [a for a in self.assets if a["mime"].startswith(prefix)]
