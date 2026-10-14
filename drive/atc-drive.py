@@ -621,8 +621,9 @@ def run_show(send, show, house, marker=True):
     if clip:   cue(send, f"a film, looping — {clip['name']}",
                    "/atc/play/flat", clip["name"], 1, 1.0, hold=8)
     cue(send, "colour: the whole house goes red", "/color/1", 199, 31, 23, hold=3)
-    # The four numbers are length, delay, repeat and strength, in that order:
-    # a two-second buzz, a quarter-second after the cue, at 40 per cent.
+    # The four numbers are length, start, repeat and strength, in that order.
+    # Both times are milliseconds; the strength is a percentage. So: a
+    # two-second buzz, starting 250 ms after the cue, at 40 per cent.
     cue(send, "a buzz with a shape — 2s, a beat late, at 40%",
         "/vibrate/1", 2000, 250, 0, 40, hold=4)
     cue(send, "a buzz that keeps going until it is stopped",

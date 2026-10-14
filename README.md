@@ -231,7 +231,10 @@ Any OSC sender will do; a cue is an address and some values on **UDP 3000**:
 /atc/strike                               and comes down
 /atc/play    clip.mp4  1  1.0             a file, looping, to the whole house
 /color/1     199 31 23                    every screen fills with one colour
-/vibrate/1   2000 250 1 40                a buzz: 2s long, a beat late, repeating, at 40%
+/vibrate/1   2000 250 1 40                a buzz, shaped: length and start in
+                                          milliseconds, then repeat, then
+                                          strength per cent — so 2 s long,
+                                          starting 250 ms in, repeating, at 40%
 /vibrate/0                                and stopped
 /atc/effect  rain  1  1.0                 a look over the device's own camera
 ```
