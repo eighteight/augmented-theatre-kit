@@ -31,6 +31,8 @@ def blender():
     return None
 
 # ------------------------------------------------------------------ the anchor
+# Only for --new-anchor; the demo set keeps the published drawing. See below.
+#
 # A tracker finds a picture by its corners and edges. Three large flat shapes
 # give it almost nothing to hold on to, so the primaries are broken up with
 # rules and counter-forms until there is detail everywhere, and the whole thing
@@ -63,7 +65,27 @@ def anchor(path, N=1024):
         os.remove(tmp)
 
 print(f"building the demo AR set in {OUT}")
-anchor(p("marker.jpg"))
+
+# ---- which drawing this set stands on ------------------------------------
+# The one that is already printed. This set's anchor is the one the Dashboard
+# ships and the one published at
+#   https://augmented-theatre.web.app/downloads/demo-triadic-ballet-anchor.jpg
+# so it is kept rather than replaced: a phone looks for the picture named in
+# the set it was given, and a set carrying a different drawing -- however good
+# -- simply is not found on the sheet in the audience's hands. That is a
+# silent failure, which is the worst kind: the cue goes out, the camera opens,
+# nothing stands up.
+#
+# --new-anchor draws a fresh one instead, which is what you want for a set of
+# your own; print that, not this.
+SHIPPED = os.path.join(HERE, "demo-triadic-ballet", "marker.jpg")
+if "--new-anchor" in sys.argv or not os.path.exists(SHIPPED):
+    anchor(p("marker.jpg"))
+elif os.path.abspath(SHIPPED) != os.path.abspath(p("marker.jpg")):
+    shutil.copyfile(SHIPPED, p("marker.jpg"))
+    say("kept the published anchor (--new-anchor draws a fresh one instead)")
+else:
+    say("kept the published anchor (--new-anchor draws a fresh one instead)")
 
 # ------------------------------------------------------------------ the films
 for name, life in (("screen-left", "0x1a3d94"), ("screen-right", "0xc71f17")):

@@ -120,10 +120,20 @@ It writes `ar-set/demo-triadic-ballet/`, which is already in this repository —
 so you can deliver the set to a phone (below) before installing Blender, and
 run this when you want to change it.
 
-The anchor is drawn to be *findable*: detail everywhere rather than three flat
-shapes, no mirror symmetry (a symmetric design can be recognised the wrong way
-round), hard contrast, no gradients. Print it 21 cm square — that is the width
-the set is scaled against, declared as `widthMeters` in `ar-set.json`.
+**The anchor is the one that is already printed.** This set's drawing is the one
+the Dashboard ships and the one published at
+[augmented-theatre.web.app/downloads/demo-triadic-ballet-anchor.jpg](https://augmented-theatre.web.app/downloads/demo-triadic-ballet-anchor.jpg),
+so `make-ar-set.py` keeps it rather than drawing another. A phone looks for the
+picture named in the set it was given: a set carrying a *different* drawing is
+simply never found on the sheet in the audience's hands, and it fails silently
+— the cue goes out, the camera opens, nothing stands up. `--new-anchor` draws a
+fresh one instead, which is what you want for a set of your own; print that one.
+
+Whatever the drawing, it has to be *findable*: detail everywhere rather than
+three flat shapes, no mirror symmetry (a symmetric design can be recognised the
+wrong way round), hard contrast, no gradients. Print it 21 cm square — that is
+the width the set is scaled against, declared as `widthMeters` in
+`ar-set.json`.
 
 `build-the-figure.py` builds the figure in Blender. It is a worked example, not
 a general tool: it makes *this* set, and the way to make your own is to read it
