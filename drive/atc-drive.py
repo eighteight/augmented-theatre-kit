@@ -89,26 +89,42 @@ def parse_osc(data):
 
 # ------------------------------------------------------------------ the house
 def broadcast_addresses():
-    """Every directed broadcast address this machine can see.
+    """Every broadcast address this machine can reach a venue on.
 
-    255.255.255.255 follows the default route, which on a laptop is often not
-    the venue Wi-Fi, so cues sent there can vanish. The interface's own
-    broadcast address is carried by the subnet route instead. We send to each.
+    Not only the default route's. A laptop with a VPN up has its default route
+    inside the tunnel, so "what is my address?" answers with the tunnel's and
+    255.255.255.255 goes down it -- and every cue vanishes while the Wi-Fi the
+    audience is on sits there untouched. That is a silent failure of exactly
+    the kind this whole file exists to avoid, so each interface's own broadcast
+    address is asked for by name and all of them are used.
     """
     out = []
     try:
-        import fcntl, array
-        names = array.array("B", b"\0" * 4096)
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        n = struct.unpack("iL", fcntl.ioctl(s.fileno(), 0xc00c6914,
-            struct.pack("iL", 4096, names.buffer_info()[0])))[0]
-        del s
+        # ifconfig on macOS and BSD, ip on Linux: both are present wherever
+        # they are the right answer, and neither is a dependency to install.
+        for command in (["ifconfig"], ["ip", "-4", "-o", "addr"]):
+            try:
+                text = subprocess.run(command, capture_output=True, text=True, timeout=4).stdout
+            except (OSError, subprocess.SubprocessError):
+                continue
+            if not text:
+                continue
+            # "broadcast 192.168.31.255" (ifconfig) or "brd 192.168.31.255" (ip)
+            words = text.replace("\n", " ").split()
+            for i, word in enumerate(words[:-1]):
+                if word in ("broadcast", "brd"):
+                    candidate = words[i + 1].strip()
+                    if candidate.count(".") == 3 and candidate not in out:
+                        out.append(candidate)
+            if out:
+                break
     except Exception:
         pass
     try:                                     # the portable way: ask for our own IP
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 1)); ip = s.getsockname()[0]; s.close()
-        out.append(".".join(ip.split(".")[:3] + ["255"]))
+        mine = ".".join(ip.split(".")[:3] + ["255"])
+        if mine not in out: out.append(mine)
     except Exception:
         pass
     out.append("255.255.255.255")
