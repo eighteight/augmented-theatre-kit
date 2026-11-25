@@ -747,12 +747,15 @@ INSTRUMENTS = {
 class Ensemble:
     """The phones as one instrument, spoken to the way the console speaks.
 
-    There are no note-on and note-off messages. /midi/1 arms the house and
-    sounds nothing; /midi/state is the chord being held now, sent again about
-    three times a second for as long as it should sound; each phone takes one
-    note of it, chosen from its own install id. A phone that stops hearing the
-    state lets it expire after the ttl, so a lost packet can make a chord late
-    but never leave a note sounding. /midi/0 silences everything.
+    There are no note-on and note-off messages, and no arm or stop cue.
+    /midi/chord is the chord being held now, sent again about three times a
+    second for as long as it should sound; each phone takes one note of it,
+    chosen from its own install id. The first chord a phone hears arms it --
+    starts its audio and takes it out of the foyer. A phone that stops hearing
+    the chord lets it expire after the ttl, so a lost packet can make a chord
+    late but never leave a note sounding. To stop at once, send one empty
+    chord with the shortest ttl, 250 ms: when it expires, the phones let
+    everything go. /midi/instrument is the sound.
 
     Every number is an int, on purpose: a float strictly between 0 and 1
     anywhere in a /midi/ cue is read as the share, so a gain sent as 0.8
@@ -761,19 +764,24 @@ class Ensemble:
     TTL, GAIN, RATE = 4000, 100, 0.33
 
     def __init__(self, send):
-        self.send, self.rev = send, int(time.time()) % 100000
+        # The revision counts from the clock, as the consoles do -- tenths of
+        # a second since 2026 -- so a run started after another sender is
+        # above anything the phones still hold.
+        self.send = send
+        self.rev = int((time.time() - 1767225600) * 10) & 0x7FFFFFFF
 
-    def arm(self):
-        print("      /midi/1")
-        self.send.send("/midi/1")
-        time.sleep(0.4)
+    def stop(self):
+        """One empty chord for the whole house, ttl 250 ms, three times.
 
-    def silence(self):
-        # Sent three times: the repeats that would correct a lost one have
-        # just stopped.
-        print("      /midi/0  (x3)")
+        With no share it reaches every phone whatever part it joined, and
+        when it expires a quarter of a second later they let everything go.
+        Three copies because the repeats that would correct a lost one have
+        just stopped. Half a minute later the phones stand their audio down
+        by themselves."""
+        self.rev += 1
+        print(f"      /midi/chord rev {self.rev} rest, ttl 250  (x3)")
         for _ in range(3):
-            self.send.send("/midi/0"); time.sleep(0.05)
+            self.send.send("/midi/chord", self.rev, 250, self.GAIN, 0); time.sleep(0.05)
 
     @staticmethod
     def voice_args(name, share=None, phase=None):
@@ -802,13 +810,13 @@ class Ensemble:
         self.rev += 1
         for chord, inst, density, share, phase in parts:
             where = "" if share is None else f"  share {share:.3f} phase {phase or 0:.3f}"
-            print(f"      /midi/voice {inst:<10} /midi/state rev {self.rev} "
+            print(f"      /midi/instrument {inst:<10} /midi/chord rev {self.rev} "
                   f"{chord or 'rest'} density {density}{where}")
         end = time.time() + seconds
         while time.time() < end:
             for chord, inst, density, share, phase in parts:
-                self.send.send("/midi/voice", *self.voice_args(inst, share, phase))
-                self.send.send("/midi/state", *self.state_args(chord, density, share, phase))
+                self.send.send("/midi/instrument", *self.voice_args(inst, share, phase))
+                self.send.send("/midi/chord", *self.state_args(chord, density, share, phase))
             time.sleep(self.RATE)
 
 def phases(n):
@@ -825,14 +833,13 @@ def run_ensemble(send):
     e = Ensemble(send)
     print("\n[ensemble] the phones as one instrument — turn the volume up")
     send.send("/title/1", "the ensemble: each phone plays one note of the chord")
-    e.arm()
     try:
-        print("\n[ensemble] a chord, struck once, on the built-in voice")
+        print("\n[ensemble] a chord, struck once, on the built-in voice -- it also arms the phones")
         e.hold([([60, 64, 67], "built-in", 0, None, None)], 5)
         print("\n[ensemble] a progression on marimba, re-struck 40 times a minute")
         for chord in ([57, 60, 64], [53, 57, 60, 65], [55, 59, 62, 67], [60, 64, 67, 72]):
             e.hold([(chord, "marimba", 40, None, None)], 3)
-        print("\n[ensemble] a rest — an empty chord silences without disarming")
+        print("\n[ensemble] a rest — an empty chord, still repeated, silences without stopping")
         e.hold([([], "marimba", 0, None, None)], 2)
         print("\n[ensemble] the house in three parts, each its own chord and instrument")
         send.send("/title/1", "the house in three parts")
@@ -841,7 +848,7 @@ def run_ensemble(send):
                 ([55, 62],     "breathed",   0, 1 / 3, three[1]),
                 ([72, 76, 79], "xylophone", 120, 1 / 3, three[2])], 14)
     finally:
-        e.silence()
+        e.stop()
         send.send("/title/1", "")
 
 def run_show(send, show, house, marker=True):

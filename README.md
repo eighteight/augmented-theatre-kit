@@ -343,19 +343,23 @@ made on the phone from the numbers in the cue.
 There are no note-on and note-off messages, because on Wi-Fi either can be
 lost, and a lost note-off is a phone droning in a dark theatre with nothing
 left that could stop it. The chord is sent as a **state** instead, again and
-again, about three times a second, for as long as it should sound:
+again, about three times a second, for as long as it should sound. Two cues,
+and nothing to arm or disarm:
 
 ```
-/midi/1                                   arm: start the audio, sound nothing
-/midi/voice 0 9  100 127 900  400 70 450  1000 40 220
+/midi/instrument 0 9  100 127 900  400 70 450  1000 40 220
                                           the instrument: attack in ms, then up
                                           to four partials, each ratio (x100),
                                           level 0-127, decay in ms — a marimba
-/midi/state 7 4000 100 40  60 64 67       the chord: revision 7, good for 4 s,
+/midi/chord 7 4000 100 40  60 64 67       the chord: revision 7, good for 4 s,
                                           gain 100, re-struck 40 times a minute,
                                           C E G — repeated about 3 times a second
-/midi/0                                   silence; sent three times
+/midi/chord 8 250 100 0                   stop: an empty chord, gone in 250 ms;
+                                          sent three times
 ```
+
+* **The first chord arms the phone.** It starts its audio and leaves the foyer
+  for the show. Nothing has to be sent before it.
 
 * **The revision moves only when the chord changes.** A phone attacks when the
   set of pitches changes; a repeat with the same revision only keeps the chord
@@ -363,7 +367,14 @@ again, about three times a second, for as long as it should sound:
   makes late and duplicated UDP harmless — and why two senders cannot share a
   house: the higher count wins.
 * **Stop sending and the phones fall silent** when the ttl runs out. That is
-  the whole safety mechanism: no packet can leave a note sounding.
+  the whole safety mechanism: no packet can leave a note sounding. To stop at
+  once, send an empty chord with a ttl of 250 — the shortest a phone takes —
+  and a higher revision: when it expires the phones let everything go. A phone
+  with nothing to play for half a minute stops its audio by itself.
+* **Count revisions from the clock**, not from 1. A phone ignores a lower
+  revision until what it holds has expired, so a sender that restarts at 1
+  is ignored for one ttl. `atc-drive.py` counts tenths of a second since 2026,
+  as the Dashboard does.
 * **An empty chord is a rest**, and a pitch of `128` is how a patch sends one:
   it is outside MIDI's 0–127, so the phone reads no notes. A rest between two
   of the same note is what makes the second one strike again.
@@ -372,12 +383,10 @@ again, about three times a second, for as long as it should sound:
   the share is not rolled per cue: a phone decides once, from its install id,
   and the same phones stay in for the whole passage. Append it only below 1 —
   a trailing `1.0` is read as one more pitch.
-* `/midi/voice 0 0` returns to the phone's built-in voice, a sine. The
+* `/midi/instrument 0 0` returns to the phone's built-in voice, a sine. The
   instrument is repeated alongside the chord, so a phone that joined late
   arrives at the right sound. The levels are relative: the phone scales them
   so they sum to one, then applies the gain.
-* A phone that missed `/midi/1` arms itself on the first `/midi/state`, so the
-  arm is sent once, not repeated.
 
 **The house in parts.** A second float after the pitches is a **phase**, and
 with the share it divides the house into parts that play different chords,
@@ -385,11 +394,17 @@ instruments and densities at the same time. A phone is in a part when
 `(position + phase) mod 1 < share`, where `position` is the same stable hash of
 its install id — so three parts are three cues of share `1/3` at phases `0`,
 `2/3` and `1/3`, and every phone is in exactly one. Send the same share and
-phase on that part's `/midi/voice`, or every phone takes whichever part's
+phase on that part's `/midi/instrument`, or every phone takes whichever part's
 instrument arrived last. Write the phase as `(n-k)/n`, never `1 - k/n`: they
 differ by a rounding error, and a phase a hair under its share puts one phone
 in two parts. The parts share no clock and drift against each other; that is
 the character of the thing.
+
+A part stops on its own with an empty chord carrying its share and phase; an
+empty chord with no share stops every part at once, which is what
+`atc-drive.py` sends at the end. On the Dashboard, the part is a setting on the
+MIDI row: two rows, on one console or on two consoles with two players, can
+each play a part of the same house.
 
 The `INSTRUMENTS` table in `atc-drive.py` holds the seven instruments the
 Dashboard offers, with the numbers it sends for each.
